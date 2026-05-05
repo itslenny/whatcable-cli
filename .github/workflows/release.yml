@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          release-type: rust
+          package-name: whatcable
+
+  build-and-upload:
+    needs: release-please
+    if: needs.release-please.outputs.release_created
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Build universal binary
+        run: |
+          # Build for Apple Silicon
+          cargo build --release --target aarch64-apple-darwin
+
+          # Build for Intel
+          cargo build --release --target x86_64-apple-darwin
+
+          # Create universal binary
+          mkdir -p target/universal/release
+          lipo -create \
+            target/aarch64-apple-darwin/release/whatcable \
+            target/x86_64-apple-darwin/release/whatcable \
+            -output target/universal/release/whatcable
+
+          # Verify
+          lipo -info target/universal/release/whatcable
+
+          # Strip debug symbols
+          strip target/universal/release/whatcable
+
+          # Create tarball
+          cd target/universal/release
+          tar -czf whatcable-macos-universal.tar.gz whatcable
+          cd ../../..
+
+          # Also create separate arch-specific tarballs
+          cd target/aarch64-apple-darwin/release
+          tar -czf whatcable-macos-aarch64.tar.gz whatcable
+          cd ../../..
+
+          cd target/x86_64-apple-darwin/release
+          tar -czf whatcable-macos-x86_64.tar.gz whatcable
+          cd ../../..
+
+      - name: Upload Release Assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ needs.release-please.outputs.tag_name }} \
+            target/universal/release/whatcable-macos-universal.tar.gz \
+            target/aarch64-apple-darwin/release/whatcable-macos-aarch64.tar.gz \
+            target/x86_64-apple-darwin/release/whatcable-macos-x86_64.tar.gz
