@@ -1,9 +1,29 @@
 use anyhow::{Context, Result};
+use core_foundation::base::TCFType;
+use core_foundation::number::CFNumber;
+use core_foundation::string::CFString;
+use io_kit_sys::*;
 use plist::Value;
+use std::ffi::CStr;
 use std::io::Cursor;
 use std::process::Command;
 
 use crate::models::{PDEndpoint, PDIdentity, PowerOption, PowerSource, USBCPort, USBDevice};
+
+/// Capture raw ioreg output for test fixtures
+#[allow(dead_code)]
+pub fn fetch_raw_ioreg_output(class: &str) -> Result<Vec<u8>> {
+    let output = Command::new("ioreg")
+        .args(["-c", class, "-r", "-l", "-a"])
+        .output()
+        .context(format!("Failed to execute ioreg for class {}", class))?;
+
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    Ok(output.stdout)
+}
 
 /// Fetch all USB-C / MagSafe port controllers from IOKit.
 /// Matches classes: AppleHPMInterfaceType10/11/12 (M3+) and AppleTCControllerType10 (M1/M2).
@@ -74,6 +94,8 @@ fn parse_usbc_port(entry: &Value) -> Option<USBCPort> {
         .unwrap_or("")
         .to_string();
 
+    let bus_index = calculate_port_bus_index(id);
+
     Some(USBCPort {
         id,
         service_name,
@@ -95,6 +117,7 @@ fn parse_usbc_port(entry: &Value) -> Option<USBCPort> {
         plug_event_count: get_integer(dict, "Plug Event Count"),
         connection_count: get_integer(dict, "ConnectionCount"),
         overcurrent_count: get_integer(dict, "Overcurrent Count"),
+        bus_index,
     })
 }
 
@@ -220,7 +243,7 @@ fn parse_pd_identity(entry: &Value) -> Option<PDIdentity> {
         .or_else(|| get_string(dict, "Address Description"))
         .unwrap_or_else(|| "Unknown".to_string());
 
-    let endpoint = PDEndpoint::from_str(&endpoint_name);
+    let endpoint = PDEndpoint::from_string(&endpoint_name);
 
     let parent_port_type = get_integer(dict, "ParentPortType").unwrap_or(0);
     let parent_port_number = get_integer(dict, "ParentPortNumber").unwrap_or(0);
@@ -397,6 +420,8 @@ fn parse_usb_device(entry: &Value) -> Option<USBDevice> {
         return None;
     }
 
+    let bus_index = calculate_device_bus_index(id, location_id);
+
     Some(USBDevice {
         id,
         location_id,
@@ -409,6 +434,7 @@ fn parse_usb_device(entry: &Value) -> Option<USBDevice> {
         speed_raw,
         bus_power_ma: bus_power,
         current_ma: current,
+        bus_index,
     })
 }
 
@@ -420,5 +446,98 @@ fn format_bcd(value: u16) -> String {
         format!("{}.{}", major, minor)
     } else {
         format!("{}.{}.{}", major, minor, sub)
+    }
+}
+
+/// Calculate bus index for a USB-C port by walking IOKit parent chain
+/// looking for hpm<N> ancestor. Returns N if found (M3+ machines).
+fn calculate_port_bus_index(entry_id: u64) -> Option<i64> {
+    unsafe {
+        let mut service =
+            IOServiceGetMatchingService(kIOMasterPortDefault, IORegistryEntryIDMatching(entry_id));
+        if service == 0 {
+            return None;
+        }
+
+        for _ in 0..8 {
+            let mut parent = 0;
+            let result = IORegistryEntryGetParentEntry(service, c"IOService".as_ptr(), &mut parent);
+            IOObjectRelease(service);
+            if result != 0 {
+                return None;
+            }
+            service = parent;
+
+            let mut name_buf = [0i8; 128];
+            IORegistryEntryGetName(service, name_buf.as_mut_ptr());
+            let name = CStr::from_ptr(name_buf.as_ptr()).to_str().unwrap_or("");
+
+            if let Some(after_hpm) = name.strip_prefix("hpm") {
+                // Extract number after "hpm" - could be "hpm0" or "hpm0@..."
+                let digit_str: String = after_hpm
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect();
+
+                if let Ok(n) = digit_str.parse::<i64>() {
+                    IOObjectRelease(service);
+                    return Some(n);
+                }
+            }
+        }
+        IOObjectRelease(service);
+        None
+    }
+}
+
+/// Calculate bus index for a USB device by walking IOKit parent chain
+/// to find AppleT*USBXHCI ancestor and reading its locationID upper byte.
+/// Falls back to device's own locationID upper byte.
+fn calculate_device_bus_index(entry_id: u64, location_id: u32) -> Option<i64> {
+    unsafe {
+        let mut service =
+            IOServiceGetMatchingService(kIOMasterPortDefault, IORegistryEntryIDMatching(entry_id));
+        if service == 0 {
+            // Fallback: use device's own locationID upper byte
+            return Some(((location_id >> 24) & 0xFF) as i64);
+        }
+
+        for _ in 0..8 {
+            let mut parent = 0;
+            let result = IORegistryEntryGetParentEntry(service, c"IOService".as_ptr(), &mut parent);
+            IOObjectRelease(service);
+            if result != 0 {
+                break;
+            }
+            service = parent;
+
+            let mut class_buf = [0i8; 128];
+            IOObjectGetClass(service, class_buf.as_mut_ptr());
+            let class_name = CStr::from_ptr(class_buf.as_ptr()).to_str().unwrap_or("");
+
+            if class_name.starts_with("AppleT") && class_name.ends_with("USBXHCI") {
+                // Found XHCI controller, read its locationID
+                let loc_key = CFString::from("locationID");
+                let prop = IORegistryEntryCreateCFProperty(
+                    service,
+                    loc_key.as_concrete_TypeRef(),
+                    std::ptr::null_mut(),
+                    0,
+                );
+                IOObjectRelease(service);
+
+                if !prop.is_null() {
+                    let num = CFNumber::wrap_under_create_rule(prop as *const _);
+                    if let Some(val) = num.to_i64() {
+                        return Some((val >> 24) & 0xFF);
+                    }
+                }
+                break;
+            }
+        }
+        IOObjectRelease(service);
+
+        // Fallback: use device's own locationID upper byte
+        Some(((location_id >> 24) & 0xFF) as i64)
     }
 }

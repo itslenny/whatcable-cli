@@ -188,3 +188,73 @@ pub fn decode_cable_vdo(vdo: u32, is_active: bool) -> CableVDO {
         max_voltage_encoded: max_v,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_product_type_from_raw() {
+        assert_eq!(ProductType::from_raw(0), ProductType::Undefined);
+        assert_eq!(ProductType::from_raw(3), ProductType::PassiveCable);
+        assert_eq!(ProductType::from_raw(4), ProductType::ActiveCable);
+        assert_eq!(ProductType::from_raw(5), ProductType::Ama);
+        assert_eq!(ProductType::from_raw(99), ProductType::Undefined);
+    }
+
+    #[test]
+    fn test_decode_id_header() {
+        // Test VDO with usb_comm_host=1, usb_comm_device=1, modal_operation=1
+        // ufp_product_type=5 (AMA), dfp_product_type=0
+        let vdo: u32 = 0xEC800000;
+        let header = decode_id_header(vdo);
+
+        assert!(header.usb_comm_host);
+        assert!(header.usb_comm_device);
+        assert!(header.modal_operation);
+        assert_eq!(header.ufp_product_type, ProductType::Ama);
+    }
+
+    #[test]
+    fn test_cable_speed_from_raw() {
+        assert_eq!(CableSpeed::from_raw(0), CableSpeed::Usb20);
+        assert_eq!(CableSpeed::from_raw(1), CableSpeed::Usb32Gen1);
+        assert_eq!(CableSpeed::from_raw(2), CableSpeed::Usb32Gen2);
+        assert_eq!(CableSpeed::from_raw(3), CableSpeed::Usb4Gen3);
+        assert_eq!(CableSpeed::from_raw(99), CableSpeed::Usb20);
+    }
+
+    #[test]
+    fn test_cable_speed_labels() {
+        assert_eq!(CableSpeed::Usb20.label(), "USB 2.0 (480 Mbps)");
+        assert_eq!(CableSpeed::Usb32Gen1.label(), "USB 3.2 Gen 1 (5 Gbps)");
+        assert_eq!(CableSpeed::Usb4Gen4.label(), "USB4 Gen 4 (80 Gbps)");
+    }
+
+    #[test]
+    fn test_decode_cable_vdo_passive() {
+        // Speed = 1 (5 Gbps), Current = 1 (3A), VBUS = 0, MaxV = 0 (20V)
+        let vdo: u32 = 0x00000021;
+        let cable = decode_cable_vdo(vdo, false);
+
+        assert_eq!(cable.speed, CableSpeed::Usb32Gen1);
+        assert_eq!(cable.current, CableCurrent::ThreeAmp);
+        assert_eq!(cable.cable_type, CableType::Passive);
+        assert_eq!(cable.max_watts, 60);
+        assert_eq!(cable.max_volts(), 20);
+    }
+
+    #[test]
+    fn test_decode_cable_vdo_active_5a() {
+        // Speed = 2 (10 Gbps), Current = 2 (5A), VBUS = 1, MaxV = 1 (30V)
+        let vdo: u32 = 0x00000252;
+        let cable = decode_cable_vdo(vdo, true);
+
+        assert_eq!(cable.speed, CableSpeed::Usb32Gen2);
+        assert_eq!(cable.current, CableCurrent::FiveAmp);
+        assert_eq!(cable.cable_type, CableType::Active);
+        assert!(cable.vbus_through_cable);
+        assert_eq!(cable.max_watts, 150);
+        assert_eq!(cable.max_volts(), 30);
+    }
+}

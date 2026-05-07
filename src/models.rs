@@ -22,6 +22,9 @@ pub struct USBCPort {
     pub plug_event_count: Option<i64>,
     pub connection_count: Option<i64>,
     pub overcurrent_count: Option<i64>,
+    /// Bus index derived from hpm<N> ancestor in IOKit parent chain (M3+).
+    /// Used to match devices to their physical port. None on M1/M2.
+    pub bus_index: Option<i64>,
 }
 
 impl USBCPort {
@@ -39,9 +42,8 @@ impl USBCPort {
 
     pub fn plug_orientation_label(&self) -> &str {
         match self.plug_orientation {
-            Some(0) => "Normal",
-            Some(1) => "Flipped",
-            _ => "Unknown",
+            Some(1) => "Normal",
+            _ => "Flipped",
         }
     }
 
@@ -153,7 +155,7 @@ pub enum PDEndpoint {
 }
 
 impl PDEndpoint {
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_string(s: &str) -> Self {
         match s {
             "SOP" => PDEndpoint::Sop,
             "SOP'" => PDEndpoint::SopPrime,
@@ -176,6 +178,9 @@ pub struct USBDevice {
     pub speed_raw: Option<u8>,
     pub bus_power_ma: Option<i64>,
     pub current_ma: Option<i64>,
+    /// Bus index from XHCI controller (upper byte of locationID).
+    /// Used to match device to physical port. None if derivation failed.
+    pub bus_index: Option<i64>,
 }
 
 impl USBDevice {
@@ -196,5 +201,160 @@ impl USBDevice {
             .clone()
             .or_else(|| self.vendor_name.clone())
             .unwrap_or_else(|| format!("USB Device (VID: 0x{:04X})", self.vendor_id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_usbc_port_orientation_labels() {
+        let mut port = create_test_port();
+
+        port.plug_orientation = Some(1);
+        assert_eq!(port.plug_orientation_label(), "Normal");
+
+        port.plug_orientation = Some(2);
+        assert_eq!(port.plug_orientation_label(), "Flipped");
+
+        port.plug_orientation = Some(0);
+        assert_eq!(port.plug_orientation_label(), "Flipped");
+
+        port.plug_orientation = None;
+        assert_eq!(port.plug_orientation_label(), "Flipped");
+    }
+
+    #[test]
+    fn test_usbc_port_mode_type_labels() {
+        let mut port = create_test_port();
+
+        port.usb_mode_type = Some(0);
+        assert_eq!(port.usb_mode_type_label(), "None");
+
+        port.usb_mode_type = Some(1);
+        assert_eq!(port.usb_mode_type_label(), "Host");
+
+        port.usb_mode_type = Some(2);
+        assert_eq!(port.usb_mode_type_label(), "Device");
+
+        port.usb_mode_type = Some(3);
+        assert_eq!(port.usb_mode_type_label(), "DRD (Dual-Role)");
+    }
+
+    #[test]
+    fn test_usbc_port_key() {
+        let mut port = create_test_port();
+
+        port.port_type_description = Some("USB-C".to_string());
+        port.port_number = Some(1);
+        assert_eq!(port.port_key(), Some((2, 1)));
+
+        port.port_type_description = Some("MagSafe 3".to_string());
+        port.port_number = Some(2);
+        assert_eq!(port.port_key(), Some((17, 2)));
+
+        port.port_type_description = None;
+        assert_eq!(port.port_key(), None);
+    }
+
+    #[test]
+    fn test_usb_device_speed_labels() {
+        let mut device = create_test_device();
+
+        device.speed_raw = Some(0);
+        assert_eq!(device.speed_label(), "Low Speed (1.5 Mbps)");
+
+        device.speed_raw = Some(1);
+        assert_eq!(device.speed_label(), "Full Speed (12 Mbps)");
+
+        device.speed_raw = Some(2);
+        assert_eq!(device.speed_label(), "High Speed (480 Mbps)");
+
+        device.speed_raw = Some(3);
+        assert_eq!(device.speed_label(), "SuperSpeed (5 Gbps)");
+
+        device.speed_raw = Some(4);
+        assert_eq!(device.speed_label(), "SuperSpeed+ (10 Gbps)");
+    }
+
+    #[test]
+    fn test_usb_device_display_name() {
+        let mut device = create_test_device();
+
+        device.product_name = Some("Magic Mouse".to_string());
+        device.vendor_name = Some("Apple Inc.".to_string());
+        assert_eq!(device.display_name(), "Magic Mouse");
+
+        device.product_name = None;
+        assert_eq!(device.display_name(), "Apple Inc.");
+
+        device.vendor_name = None;
+        device.vendor_id = 0x05AC;
+        assert_eq!(device.display_name(), "USB Device (VID: 0x05AC)");
+    }
+
+    #[test]
+    fn test_power_option_labels() {
+        let option = PowerOption {
+            voltage_mv: 20000,
+            max_current_ma: 3000,
+            max_power_mw: 60000,
+        };
+
+        assert_eq!(option.volts_label(), "20.0V");
+        assert_eq!(option.amps_label(), "3.00A");
+        assert_eq!(option.watts_label(), "60W");
+    }
+
+    #[test]
+    fn test_pd_endpoint_from_str() {
+        assert_eq!(PDEndpoint::from_string("SOP"), PDEndpoint::Sop);
+        assert_eq!(PDEndpoint::from_string("SOP'"), PDEndpoint::SopPrime);
+        assert_eq!(PDEndpoint::from_string("SOP''"), PDEndpoint::SopDoublePrime);
+        assert_eq!(PDEndpoint::from_string("invalid"), PDEndpoint::Unknown);
+    }
+
+    fn create_test_port() -> USBCPort {
+        USBCPort {
+            id: 0,
+            service_name: "Port-USB-C".to_string(),
+            class_name: "AppleHPMInterfaceType12".to_string(),
+            port_description: None,
+            port_type_description: Some("USB-C".to_string()),
+            port_number: Some(1),
+            connection_active: Some(false),
+            active_cable: Some(false),
+            optical_cable: Some(false),
+            usb_active: Some(false),
+            super_speed_active: Some(false),
+            usb_mode_type: Some(0),
+            usb_connect_string: None,
+            transports_supported: vec![],
+            transports_active: vec![],
+            transports_provisioned: vec![],
+            plug_orientation: Some(0),
+            plug_event_count: Some(0),
+            connection_count: Some(0),
+            overcurrent_count: Some(0),
+            bus_index: None,
+        }
+    }
+
+    fn create_test_device() -> USBDevice {
+        USBDevice {
+            id: 0,
+            location_id: 0,
+            vendor_id: 0,
+            product_id: 0,
+            vendor_name: None,
+            product_name: None,
+            serial_number: None,
+            usb_version: None,
+            speed_raw: Some(1),
+            bus_power_ma: None,
+            current_ma: None,
+            bus_index: None,
+        }
     }
 }

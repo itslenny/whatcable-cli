@@ -112,6 +112,10 @@ fn main() -> Result<()> {
                 println!("   Transports Supported: {:?}", port.transports_supported);
                 println!("   USB Mode Type: {}", port.usb_mode_type_label());
                 println!("   Plug Orientation: {}", port.plug_orientation_label());
+                println!(
+                    "   Bus Index: {}",
+                    port.bus_index.map_or("N/A".to_string(), |v| v.to_string())
+                );
 
                 // Show PD identity details if available
                 if !port_identities.is_empty() {
@@ -135,15 +139,20 @@ fn main() -> Result<()> {
                     }
                 }
             }
-        }
 
-        // Show all connected USB devices in a separate section
-        if !usb_devices.is_empty() {
-            println!();
-            println!("━━━ Connected USB Devices ━━━");
-            println!("(Cannot determine which port each device is connected to)\n");
-            for device in &usb_devices {
-                println!("• {} — {}", device.display_name(), device.speed_label());
+            // Show USB devices connected to this port (if we can determine bus index)
+            if let Some(port_bus) = port.bus_index {
+                let port_devices: Vec<_> = usb_devices
+                    .iter()
+                    .filter(|d| d.bus_index == Some(port_bus))
+                    .collect();
+
+                if !port_devices.is_empty() {
+                    println!("\n   Connected USB Devices:");
+                    for device in port_devices {
+                        println!("   • {} — {}", device.display_name(), device.speed_label());
+                    }
+                }
             }
         }
     }

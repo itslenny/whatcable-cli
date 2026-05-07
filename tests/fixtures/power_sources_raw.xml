@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+	<dict>
+		<key>Description</key>
+		<string>Port-MagSafe 3@1/Power In/Brick ID</string>
+		<key>IOObjectClass</key>
+		<string>IOPortFeaturePowerSource</string>
+		<key>IOObjectRetainCount</key>
+		<integer>9</integer>
+		<key>IORegistryEntryID</key>
+		<integer>4295148334</integer>
+		<key>IORegistryEntryName</key><string>FAKE-ENTRY-1</string>
+		<key>IOServiceBusyState</key>
+		<integer>0</integer>
+		<key>IOServiceBusyTime</key>
+		<integer>397333</integer>
+		<key>IOServiceState</key>
+		<integer>30</integer>
+		<key>Metadata</key>
+		<dict/>
+		<key>Owner</key>
+		<string>IOService:/AppleARMPE/arm-io@10F00000/AppleH15IO/smc@DC400000/AppleASCWrapV6/iop-smc-nub/RTBuddy(SMC)/SMCEndpoint1/AppleSMCKeysEndpoint/smc-charger-util/AppleSMCChargerUtil</string>
+		<key>ParentBuiltInPortNumber</key>
+		<integer>1</integer>
+		<key>ParentBuiltInPortType</key>
+		<integer>17</integer>
+		<key>ParentBuiltInPortTypeDescription</key>
+		<string>MagSafe 3</string>
+		<key>ParentFeatureType</key>
+		<integer>3</integer>
+		<key>ParentPortNumber</key>
+		<integer>1</integer>
+		<key>ParentPortType</key>
+		<integer>17</integer>
+		<key>ParentPortTypeDescription</key>
+		<string>MagSafe 3</string>
+		<key>PowerSourceName</key>
+		<string>Brick ID</string>
+		<key>PowerSourceOptions</key>
+		<array>
+			<dict>
+				<key>Class</key>
+				<string>IOPortFeaturePowerSourceOptionFixed</string>
+				<key>Max Current (mA)</key>
+				<integer>500</integer>
+				<key>Max Power (mW)</key>
+				<integer>2500</integer>
+				<key>UUID</key>
+				<string>B8C766D3-9C31-4916-A1BA-A49FE91EF3C5</string>
+				<key>Voltage (mV)</key>
+				<integer>5000</integer>
+			</dict>
+		</array>
+		<key>PowerSourceType</key>
+		<integer>0</integer>
+		<key>Priority</key>
+		<integer>-500</integer>
+	</dict>
+</array>
+</plist>
